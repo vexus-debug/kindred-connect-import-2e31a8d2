@@ -11,12 +11,50 @@ import { getRoleLabel } from "@/config/roleAccess";
 import clinexusLogo from "@/assets/clinexus-logo.png";
 
 export default function SelectClinic() {
-  const { user, profile, orgMemberships, roles, loading, signOut } = useAuth();
+  const { user, profile, orgMemberships, roles, loading, signOut, refetchUserData } = useAuth();
   const navigate = useNavigate();
+  const { toast } = useToast();
+  const [creatingClinic, setCreatingClinic] = useState(false);
+  const creationAttempted = useRef(false);
+
+  // Fallback: finish clinic creation from signup metadata (email-confirmation flow)
+  useEffect(() => {
+    if (loading || !user || creationAttempted.current) return;
+    if (orgMemberships.length > 0) return;
+    if (roles.includes("super_admin")) return;
+
+    const meta = (user.user_metadata || {}) as Record<string, string | undefined>;
+    if (!meta.clinic_name) return;
+
+    creationAttempted.current = true;
+    setCreatingClinic(true);
+    (async () => {
+      try {
+        const { slug } = await createClinicForUser(user.id, {
+          clinic_name: meta.clinic_name as string,
+          clinic_type: meta.clinic_type || "dental",
+          clinic_phone: meta.clinic_phone || meta.phone || null,
+          clinic_address: meta.clinic_address || null,
+          clinic_email: meta.clinic_email || user.email || null,
+        });
+        await refetchUserData();
+        toast({ title: "Clinic created", description: `${meta.clinic_name} is ready.` });
+        navigate(`/clinic/${slug}/dashboard`, { replace: true });
+      } catch (error: any) {
+        toast({
+          title: "Could not finish clinic setup",
+          description: error?.message ?? "Please try again.",
+          variant: "destructive",
+        });
+      } finally {
+        setCreatingClinic(false);
+      }
+    })();
+  }, [loading, user, orgMemberships, roles, refetchUserData, navigate, toast]);
 
   // Auto-redirect if user has exactly 1 org
   useEffect(() => {
-    if (loading) return;
+    if (loading || creatingClinic) return;
     if (!user) {
       navigate("/", { replace: true });
       return;
@@ -29,9 +67,9 @@ export default function SelectClinic() {
     if (orgMemberships.length === 1) {
       navigate(`/clinic/${orgMemberships[0].org_slug}/dashboard`, { replace: true });
     }
-  }, [loading, user, orgMemberships, roles, navigate]);
+  }, [loading, creatingClinic, user, orgMemberships, roles, navigate]);
 
-  if (loading) {
+  if (loading || creatingClinic) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3">
